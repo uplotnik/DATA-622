@@ -1,0 +1,936 @@
+---
+title: "Data 622 Assignment 2: Experimentation & Model Training "
+author: "Uliana Plotnikova"
+date: "2025-03-11"
+output:
+  html_document:
+     
+    theme: lumen
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: yes
+  pdf_document:
+     latex_engine: xelatex
+---
+
+**In Machine Learning, Experimentation refers to the systematic process of designing, executing, and analyzing different configurations to identify the optimal settings that performs best on a given task. Experimentation is learning by doing. It involves systematically changing parameters, evaluating results with metrics, and comparing different approaches to find the best solution; essentially, it's the practice of testing and refining machine learning models through controlled experiments to improve their performance.**
+
+
+**The key is to modify only one or a few variables at a time to isolate the impact of each change and understand its effect on model performance. In the assignment you will conduct at least 6 experiments. In real life, data scientists run anywhere from a dozen to hundreds of experiments (depending on the dataset and problem domain).**
+
+
+```{r, warning=FALSE,message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(rpart)
+library(rpart.plot)
+library(lubridate)
+library(skimr)
+library(stringr)
+library(corrplot)
+library(ggplot2)
+library(fpp3)
+library(caret)
+library(highcharter)
+library(dplyr)
+library(randomForest)
+library(adabag)
+library(ROCR)           
+library(pROC)
+library(knitr)
+library(kableExtra)
+```
+
+
+
+**In this assignment we will be using Bank Marketing Dataset:**
+
+**A Portuguese bank conducted a marketing campaign (phone calls) to predict if a client will subscribe to a term deposit.  The records of their efforts are available in the form of a dataset.Download the Bank Marketing Dataset from: https://archive.ics.uci.edu/dataset/222/bank+marketing**
+
+## Load and Inspect the Data
+
+```{r setup, include=FALSE}
+set.seed(123)
+bank<- read.csv("https://raw.githubusercontent.com/uplotnik/DATA-622/refs/heads/main/bank-full.csv",sep=";")
+
+```
+
+
+
+
+```{r}
+str(bank)
+summary(bank)
+```
+
+
+```{r, message=FALSE}
+desc_table <- data.frame(
+
+  Var = c("age", "job", "marital", "education", "default", "balance", 
+
+          "housing", "loan", "contact", "day", "month", "duration", 
+
+          "campaign", "pdays", "previous", "poutcome", "y"),
+
+  Desc = c("Age of the client", 
+
+           "Occupation type", 
+
+           "Marriage status", 
+
+           "Highest education level of the client", 
+
+           "Indicates if there is a credit default", 
+
+           "Yearly average balance in euros", 
+
+           "Possession of a housing loan", 
+
+           "Possession of a personal loan", 
+
+           "Type of communication contact", 
+
+           "Day of the last contact", 
+
+           "Month of the last contact", 
+
+           "Duration of the last contact in seconds", 
+
+           "Total number of contacts made during this campaign for the client", 
+
+           "Days elapsed since the client was last contacted in a previous campaign (-1 means no previous contact)", 
+
+           "Number of contacts before the current campaign for the client", 
+
+           "Result of the previous marketing campaign", 
+
+           "Indicates if the client has subscribed to a term deposit")
+
+)
+
+
+kable(desc_table, align = "ll", caption = "Description of Variables") %>%
+kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+full_width = FALSE) %>%
+column_spec(1, width = "2in") %>%
+column_spec(2, width = "5in")
+```
+
+## Data Preparation
+
+
+In this section, we will prepapre the data for further analysis.
+
+- Replace "unknown" with NA
+- Handle missing values
+- Convert categorical variables to factors
+- Perform Feature Engineering (create new features: `age_group`, `balance_group`, `long call`)
+- Convert new features to factors
+- Slit the data
+
+```{r}
+# Replace "unknown" with NA
+bank <- bank %>% mutate_all(~ifelse(. == "unknown", NA, .))
+```
+
+
+```{r}
+# Handle missing values 
+for (col in names(bank)) {
+if (is.factor(bank[[col]])) {
+mode_val <- names(sort(table(bank[[col]]), decreasing = TRUE))[1]
+bank[[col]][is.na(bank[[col]])] <- mode_val
+
+    }
+
+}
+```
+
+```{r}
+# Convert categorical variables to factors
+
+bank <- data.frame(lapply(bank, function(x) if(is.character(x)) factor(x) else x))
+```
+
+
+
+
+```{r}
+# Feature Engineering: Creating age_group
+
+bank$age_group <- cut(bank$age, breaks = c(17, 24, 34, 44, 54, 64, 100),
+
+                      labels = c("18-24", "25-34", "35-44", "45-54", "55-64", "65+"))
+
+
+##Create a new feature based on call duration 
+bank <- bank %>% mutate(long_call = if_else(duration > median(duration, na.rm = TRUE), "yes", "no"))
+
+
+```
+
+```{r}
+# Feature Engineering: Creating balance_group (income_group)
+
+bank$balance_group <- ifelse(bank$balance <= 500, "low",
+
+                             ifelse(bank$balance <= 2000, "medium", "high"))
+```
+
+```{r}
+# Convert new features to factors
+
+bank$age_group <- as.factor(bank$age_group)
+
+bank$balance_group <- as.factor(bank$balance_group)
+
+bank$long_call <- as.factor(bank$long_call)
+```
+
+```{r}
+#Remove remaining rows with any NA values to avoid errors
+
+bank <- na.omit(bank)
+```
+
+
+Check for any remaining NA values
+
+```{r}
+print(summary(bank))
+```
+**Prepared Data**
+
+```{r}
+head(bank,10)
+```
+
+Slit the data (70% training, 30% testing) and check the distribution of target variable in both sets
+
+```{r}
+# Slit the data (70% training, 30% testing)
+
+trainIndex <- createDataPartition(bank$y, p = 0.7, list = FALSE)
+
+trainData <- bank[trainIndex, ]
+
+testData <- bank[-trainIndex, ]
+
+# Check the distribution of target variable in both sets
+prop.table(table(trainData$y))
+prop.table(table(testData$y))
+```
+
+Now that our data is prepared and organized, we are ready to begin the model implementation process.
+
+## Experiments
+
+###  Decision Trees 
+
+#### Experiment 1: Default Decision Tree
+
+Within machine learning decision trees stand out as widely used and comprehensible algorithms for classification and regression tasks. The basic decision tree model delivers essential insights into tree construction which establishes a base template for customization through specific data and goals. 
+
+**Hypothesis: A simple decision tree with default parameters will provide acceptable performance**
+
+```{r}
+dt_model1 <- rpart(y ~ ., data = trainData, method = "class")
+
+rpart.plot(dt_model1, main="Default Decision Tree Model")
+```
+
+
+The default decision tree model predicts the outcome of a marketing campaign based on two primary variables: the month of the last contact and the duration of that contact (in seconds).
+
+The root node splits the data based on the 'poutcome' variable (result of the previous marketing campaign).  If 'poutcome' is 'failure' or 'other', the model proceeds down one branch; otherwise, it follows a different path.
+
+Subsequent splits are made based on the 'month' and 'duration' variables.  Each leaf node represents a predicted probability of a positive outcome (represented by the number in the box).  For example, if the 'month' is in {apr, dec, feb, jan, may, nov} and the 'duration' is less than 166 seconds, the model predicts a 54% probability of a positive outcome.  The percentages in each leaf node represent the proportion of positive outcomes observed in the training data that fell into that specific leaf node.
+
+The model is relatively simple, using only two variables and a series of binary splits to make predictions.  The percentages at the leaf nodes provide a measure of confidence in the prediction.
+
+```{r}
+pred_dt1 <- predict(dt_model1, testData, type = "class")
+cm_dt1 <- confusionMatrix(pred_dt1, testData$y)
+acc_dt1 <- cm_dt1$overall["Accuracy"]
+cat("Decision Tree Experiment 1 (Default): Accuracy =", cm_dt1$overall["Accuracy"], "\n")
+
+```
+The result shows that our model has a predictive accuracy of 84% against the test data. 
+
+
+```{r}
+# Make predictions
+
+baseline_pred <- predict(dt_model1, testData, type = "class")
+
+# Evaluate
+
+baseline_conf_matrix <- confusionMatrix(baseline_pred, testData$y, positive = "yes")
+
+baseline_conf_matrix
+
+# Calculate ROC and AUC
+
+baseline_prob <- predict(dt_model1, testData, type = "prob")[, "yes"]
+
+baseline_roc <- roc(testData$y, baseline_prob)
+
+baseline_auc <- auc(baseline_roc)
+
+# Plot ROC curve
+
+plot(baseline_roc, main = paste("ROC Curve - Baseline Model (AUC =", round(baseline_auc, 3), ")"), col = "blue")
+
+```
+
+
+
+
+
+The default decision tree model shows moderate performance. While the accuracy is reasonably high, the sensitivity is relatively low - 56.26%, indicating potential issues in correctly identifying positive cases.  The Kappa statistic (Kappa : 0.511) suggests only moderate agreement between the model's predictions and the actual values.  Further analysis and potentially model refinement might be necessary to improve performance, particularly in correctly identifying positive cases.
+
+
+
+
+#### Experiment 2: Decision Tree Model with Hyperparameter Tuning
+
+Decision tree models require hyperparameter tuning since it influences their generalization capabilities for unseen data. A decision tree without proper tuning risks overfitting data noise or underfitting to miss the core data patterns. There are various techniques to tune hyperparameters. For our experiment we will implement the Grid search technique and cross-validation to find the best model.
+Hyperparameter tuning improves decision tree models through the management of the bias-variance trade-off. Hyperparameter tuning is essential because it helps find the tree complexity that reduces variance and keeps bias low which results in stable and accurate predictive models.
+Hyperparameter tuning seeks to discover the ideal configuration for decision tree models that maximizes their predictive performance. 
+
+
+
+**Hypothesis: Optimizing complexity parameters will improve model performance**
+
+```{r}
+
+# Define hyperparameter grid
+
+param_grid <- expand.grid(
+
+  cp = seq(0.001, 0.02, by = 0.002)  # complexity parameter
+
+)
+
+# Set up cross-validation
+
+train_control <- trainControl(
+
+  method = "cv",
+
+  number = 5,
+
+  classProbs = TRUE,
+
+  summaryFunction = twoClassSummary
+
+)
+
+# Train model with grid search
+
+tuned_model <- train(
+
+  y ~ .,
+
+  data = trainData,
+
+  method = "rpart",
+
+  trControl = train_control,
+
+  tuneGrid = param_grid,
+
+  metric = "ROC"
+
+)
+```
+
+
+```{r}
+# Print results
+
+print(tuned_model)
+
+plot(tuned_model)
+
+```
+
+
+The graph assists in finding the decision tree model's complexity parameter which produces peak predictive performance. The cross-validation results suggest that the best parameter value is around 0.002. 
+
+Beyond this point, increasing complexity will lead to a decrease in the ROC score. This means that there's an optimal level of complexity for the decision tree model.  Too simple a model will underfit, and too complex a model will overfit the data, which will result in lower performance measured by the ROC score.  The optimal complexity parameter is where the ROC score is maximized, indicating the best balance between model complexity and predictive accuracy.
+
+```{r}
+# Best model
+best_model <- tuned_model$finalModel
+```
+
+
+```{r}
+# Visualize the best tree
+rpart.plot(best_model, main = "Optimized Decision Tree")
+```
+
+```{r}
+# Make predictions
+
+tuned_pred <- predict(tuned_model, testData, type = "raw")
+```
+
+```{r}
+# Evaluate
+
+tuned_conf_matrix <- confusionMatrix(tuned_pred, testData$y, positive = "yes")
+tuned_conf_matrix
+acc_dt2 <- tuned_conf_matrix$overall["Accuracy"]
+cat("Decision Tree with Hyperparameter Tuning: Accuracy =", acc_dt2["Accuracy"], "\n")
+```
+
+
+
+```{r}
+# Calculate ROC and AUC
+
+tuned_prob <- predict(tuned_model, testData, type = "prob")[, "yes"]
+
+tuned_roc <- roc(testData$y, tuned_prob)
+
+tuned_auc <- auc(tuned_roc)
+
+# Plot ROC curve
+
+plot(tuned_roc, main = paste("ROC Curve - Baseline Model (AUC =", round(tuned_auc, 3), ")"), col = "green")
+```
+
+
+The model shows good overall accuracy (84.18%), significantly better than the default model, but with room for improvement in sensitivity (56.82%).  The high specificity (92.24%) suggests the model is good at identifying negative cases.
+
+
+#### Experiment 3: Decision Tree Model with Feature Selection
+
+
+Building an effective decision tree model requires feature selection to ensure optimal performance across multiple applications. Targeting only the most relevant features lets the model improve its predictions and avoid overfitting. 
+
+**Hypothesis: Selecting the most important features will improve model performance**
+
+
+```{r}
+# Feature importance from baseline model
+importance <- dt_model1$variable.importance
+top_features <- names(importance)[1:10]  # Select top 10 features
+top_features
+```
+
+```{r}
+# Create new dataset with selected features
+train_data_selected <- trainData[, c(top_features, "y")]
+test_data_selected <- testData[, c(top_features, "y")]
+```
+
+```{r}
+# Train model with selected features
+feature_model <- rpart(y ~ ., data = train_data_selected, method = "class")
+```
+
+```{r}
+# Visualize the tree
+rpart.plot(feature_model, main = "Decision Tree with Selected Features")
+```
+
+```{r}
+# Make predictions
+feature_pred <- predict(feature_model, test_data_selected, type = "class")
+
+```
+
+```{r}
+# Evaluate
+feature_conf_matrix <- confusionMatrix(feature_pred, test_data_selected$y, positive = "yes")
+feature_conf_matrix
+acc_dt3 <- feature_conf_matrix$overall["Accuracy"]
+cat("Decision Tree Experiment 1 (Default): Accuracy =", acc_dt3["Accuracy"], "\n")
+```
+
+```{r}
+# Calculate ROC and AUC
+feature_prob <- predict(feature_model, test_data_selected, type = "prob")[, "yes"]
+feature_roc <- roc(test_data_selected$y, feature_prob)
+feature_auc <- auc(feature_roc)
+
+```
+
+
+```{r}
+# Plot ROC curve
+
+plot(feature_roc, main = paste("ROC Curve - Feature Selection Model (AUC =", round(feature_auc, 3), ")"), col = "red")
+```
+
+
+The model has an accuracy of 83.79%, with a 95% confidence interval of (0.8224, 0.8526).  The Kappa statistic is 0.511, indicating moderate agreement.  Sensitivity is 56.26% and specificity is 91.91%.
+
+The decision tree model with selected features shows moderate predictive performance, with good specificity but lower sensitivity.  The accuracy is reasonably high, but the Kappa statistic suggests that the model's performance is only moderately better than random chance.
+
+
+
+#### Experiment summary results
+
+```{r}
+# Compile results from all experiments
+results <- data.frame(
+  Model = c("Baseline", "Feature Selection", "Hyperparameter Tuning"),
+  Accuracy = c(
+    baseline_conf_matrix$overall["Accuracy"],
+    feature_conf_matrix$overall["Accuracy"],
+    tuned_conf_matrix$overall["Accuracy"]
+  ),
+  Sensitivity = c(
+    baseline_conf_matrix$byClass["Sensitivity"],
+    feature_conf_matrix$byClass["Sensitivity"],
+    tuned_conf_matrix$byClass["Sensitivity"]
+  ),
+  Specificity = c(
+    baseline_conf_matrix$byClass["Specificity"],
+    feature_conf_matrix$byClass["Specificity"],
+    tuned_conf_matrix$byClass["Specificity"]
+  ),
+  F1_Score = c(
+    baseline_conf_matrix$byClass["F1"],
+    feature_conf_matrix$byClass["F1"],
+    tuned_conf_matrix$byClass["F1"]
+  ),
+  AUC = c(baseline_auc, feature_auc, tuned_auc)
+)
+```
+
+```{r}
+# Display results table
+print(results)
+```
+
+
+
+
+
+```{r}
+# Visualize comparison of metrics
+metrics_long <- reshape2::melt(results, id.vars = "Model")
+
+ggplot(metrics_long, aes(x = Model, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Performance Comparison Across All Models",
+       y = "Score",
+       fill = "Metric") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# Plot ROC curves for all models together
+plot(baseline_roc, col = "blue", main = "ROC Curves Comparison")
+lines(feature_roc, col = "red")
+lines(tuned_roc, col = "green")
+
+legend("bottomright", legend = c("Baseline", "Feature Selection", "Tuned"),
+       col = c("blue", "red", "green"), lwd = 2)
+```
+
+
+
+
+
+
+
+The experiments focused on enhancing model performance through the application of feature selection methods combined with hyperparameter tuning strategies. Hyperparameter tuning produced the best results with an accuracy that exceeded the baseline and feature selection models by a small margin. The Hyperparameter Tuning model achieved the best result in terms of AUC value which reached 0.8554757. The image's ROC curve demonstrates how the Hyperparameter Tuning model maintains higher true positive rates across different false positive rates compared to its counterparts. 
+
+The Hyperparameter Tuning model shows the best performance with an accuracy of 0.8417695 and an AUC of 0.8554757.
+
+
+
+
+
+
+
+### Random Forest
+
+The Random Forest algorithm stands as an essential component in the machine learning toolkit. The Random Forest algorithm achieves an optimal mix of accuracy and interpretability while maintaining flexibility which positions it as an excellent tool for research purposes and practical applications. The complexity and growing volume of data will increase the relevance of algorithms such as Random Forests which will drive insights and decision-making in multiple domains. 
+
+
+#### Experiment 1: Default Random Forest
+
+The default settings for hyperparameters deliver accurate predictions while their functionality remains easy to interpret. A classifier will reduce its chance of overfitting when the forest contains sufficient numbers of trees.  
+
+**Hypothesis: A baseline Random Forest with default settings will provide acceptable performance**
+
+
+
+
+
+
+```{r}
+rf_model1 <- randomForest(y ~ ., data = trainData)
+
+pred_rf1 <- predict(rf_model1, testData)
+
+cm_rf1 <- confusionMatrix(pred_rf1, testData$y)
+
+accuracy_rf1 <- cm_rf1$overall["Accuracy"]
+
+cat("Random Forest Experiment 1 (Default): Accuracy =", accuracy_rf1, "\n")
+
+
+```
+
+
+```{r}
+plot(rf_model1, main="Random Forest (Default) OOB Error")
+
+varImpPlot(rf_model1, main="Random Forest (Default) Variable Importance")
+```
+
+
+This initial graph represents how the out-of-bag (OOB) error rate varies based on the number of trees in the random forest. At first, the error rate reduces as the number of trees grows before reaching a stable point which shows that additional trees do not offer substantial accuracy improvement beyond this threshold. The small variations within the plateau region demonstrate the natural randomness present throughout the model's training process. 
+
+
+The second graph demonstrates variable importance within the random forest model. This plot displays the average reduction in Gini impurity for every variable. When MeanDecreaseGini values rise on the y-axis, they signify higher importance for outcome prediction. The random forest model graph indicates that 'duration', 'poutcome', 'month', 'pdays', 'balance', and 'job' are the most significant variables. The precise sequence of variable importance relies on how MeanDecreaseGini values are scaled. 
+
+#### Experiment 2: Random Forest with increased number of trees
+
+By default, the number of decision trees used is 100. This number can be adjusted depending on the computational resources available and the complexity of the problem. A larger number of trees should provide better accuracy but will require more computational power. 
+
+**Hypothesis:  Larger number of trees will provide better model performance**
+```{r}
+
+
+rf_model2 <- randomForest(y ~ ., data = trainData, ntree = 200)
+
+pred_rf2 <- predict(rf_model2, testData)
+
+cm_rf2 <- confusionMatrix(pred_rf2, testData$y)
+
+accuracy_rf2 <- cm_rf2$overall["Accuracy"]
+
+cat("Random Forest Experiment 2 (ntree = 200): Accuracy =", accuracy_rf2, "\n")
+
+
+
+
+```
+
+
+
+
+```{r}
+plot(rf_model2, main="Random Forest (ntree = 200) OOB Error")
+
+varImpPlot(rf_model2, main="Random Forest (ntree = 200) Variable Importance")
+```
+
+
+
+The graph demonstrates a decrease in the OOB error rate with more trees until it reaches a plateau which shows that additional trees beyond this point offer minimal performance benefits. The model demonstrates good performance as indicated by its low and consistent OOB error.
+
+The second graph demonstrates that 'duration', 'poutcome', 'month', 'pdays', 'balance', and 'job' are the most significant variables which is the same that we saw in our first experiment.
+
+```{r}
+# Convert confusion matrices to data frames for ggplot2
+cm_df1 <- as.data.frame(cm_rf1$table)
+
+cm_df2 <- as.data.frame(cm_rf2$table)
+# Add a model identifier
+
+cm_df1$Model <- "Default RF"
+
+cm_df2$Model <- "RF with 200 trees"
+
+# Combine the data frames
+
+combined_cm_df <- rbind(cm_df1, cm_df2)
+```
+
+```{r}
+# Plotting the confusion matrices
+
+ggplot(data = combined_cm_df, aes(x = Reference, y = Prediction, fill = Freq)) +
+
+  geom_tile() +
+
+  geom_text(aes(label = Freq), vjust = 1) +
+
+  facet_wrap(~Model) +
+
+  scale_fill_gradient(low = "white", high = "steelblue") +
+
+  theme_minimal() +
+
+  labs(title = "Confusion Matrix Comparison",
+
+       x = "Actual",
+
+       y = "Predicted",
+
+       fill = "Frequency")
+```
+
+
+```{r}
+# Create a data frame for comparing accuracies
+
+
+comparison_df <- data.frame(
+
+  Model = c("Default RF", "RF with 200 trees"),
+
+  Accuracy = c(accuracy_rf1, accuracy_rf2)
+
+)
+print(comparison_df)
+
+```
+```{r}
+# Visualization: Accuracy Comparison Bar Plot
+
+ggplot(data = comparison_df, aes(x = Model, y = Accuracy, fill = Model)) +
+
+  geom_bar(stat = "identity") +
+
+  geom_text(aes(label = round(Accuracy, 4)), vjust = -0.3) +
+
+  ylim(0, 1) +  # Assuming accuracy is between 0 and 1
+
+  theme_minimal() +
+
+  labs(title = "Accuracy Comparison",
+
+       x = "Model",
+
+       y = "Accuracy")
+```
+
+The default random forest model has a slightly higher accuracy (0.8541) compared to the model with 200 trees (0.8533).
+
+
+### Adaptive boosting
+
+In this section we will evaluate the model's performance and the impact of increasing the number of boosting iterations using Adaboost technique.
+AdaBoost stands for Adaptive Boosting and functions as a machine learning algorithm which uses ensemble learning to join multiple weak learners into a strong predictive model that delivers high accuracy.
+
+#### Experiment 1: Default AdaBoost using the adabag package
+
+**Hypothesis: Evaluate the baseline performance of AdaBoost on bank marketing data.**
+
+```{r}
+ada_model1 <- boosting(y ~ ., data = trainData, boos = TRUE, mfinal = 50)
+
+pred_ada1 <- predict.boosting(ada_model1, newdata = testData)
+
+cm_ada1 <- confusionMatrix(as.factor(pred_ada1$class), testData$y)
+acc_ada1 <- cm_ada1$overall["Accuracy"]
+cat("Adaboost Experiment 1 (mfinal = 50): Accuracy =", cm_ada1$overall["Accuracy"], "\n")
+
+
+```
+
+```{r}
+# Calculate error evolution
+evol_ada1 <- errorevol(ada_model1, newdata = testData)
+
+# Plot error evolution with the desired title
+plot(evol_ada1$error, type="l", ylim=c(0,max(evol_ada1$error)+0.05), main="AdaBoost (mfinal = 50) Error Evolution", xlab="Iterations", ylab="Error", col = "red")
+```
+
+
+Our initial experiment ran AdaBoost with its default settings for 50 iterations (mfinal = 50). The accuracy achieved is 0.8464483. The error evolution graph demonstrates a consistent error rate near 0.15 across all 50 iterations.
+
+**Experiment 2: AdaBoost with increased number of iterations**
+
+AdaBoost's predictive accuracy improves with additional iterations because its design prevents overfitting. AdaBoost uses more iterations to improve weak classifiers into powerful ones through iterative learning from their errors.
+
+**Hypothesis: The model's accuracy will improve when the number of iterations increases.**
+
+```{r}
+ada_model2 <- boosting(y ~ ., data = trainData, boos = TRUE, mfinal = 100)
+
+pred_ada2 <- predict.boosting(ada_model2, newdata = testData)
+
+cm_ada2 <- confusionMatrix(as.factor(pred_ada2$class), testData$y)
+acc_ada2 <- cm_ada2$overall["Accuracy"]
+cat("Adaboost Experiment 2 (mfinal = 100): Accuracy =", cm_ada2$overall["Accuracy"], "\n")
+
+
+```
+
+
+```{r}
+# Calculate error evolution
+evol_ada2 <- errorevol(ada_model2, newdata = testData)
+
+# Plot error evolution with the desired title
+plot(evol_ada2$error, type="l", ylim=c(0,max(evol_ada2$error)+0.05), main="AdaBoost (mfinal = 100) Error Evolution", xlab="Iterations", ylab="Error", col = "red")
+```
+
+Both graphs show a similar trend: The error rate shows an initial reduction followed by fluctuations near a steady value. The graph with mfinal = 100 consistently demonstrates a somewhat reduced error rate during the initial iterations compared to its mfinal = 50 counterpart. However, the difference is not substantial. The ultimate accuracy measurement for mfinal equal to 100 stands at 0.8468737. 
+
+
+## Essay: Experimentation & Model Training
+
+Machine Learning experimentation involves a systematic method for designing and implementing different configurations to assess and identify optimal settings for a given task. This method represents learning by doing since it involves practical application to gain knowledge. The approach requires systematic parameter adjustments followed by outcome measurements with designated metrics and then comparing different methods to establish the best solution. The process entails testing machine learning models in structured experiments while systematically improving them to achieve maximum performance efficiency.
+
+I conducted multiple experiments by applying Decision Tree models, Random Forest algorithms, and Adaptive Boosting methods during this assignment. The Bank Marketing Dataset served as the basis for analysis. The dataset contains records from a phone call marketing campaign that aimed to determine whether clients would choose term deposits.
+
+**Decision Tree**
+
+
+Decision trees serve as crucial tools in machine learning and data analysis because they combine clarity with ease of interpretation while needing little data preprocessing. Among machine learning algorithms decision trees stand out as popular models that offer simple interpretation for classification and regression tasks.
+
+**Experiment 1: Default Decision Tree**
+
+I implemented a basic experiment using a Fundamental decision tree model which operates on default parameters. This fundamental model serves as a beneficial starting point because its simplicity aids in understanding and explaining it which makes it an ideal introduction to complex machine learning theories and models. A basic decision tree model delivers important knowledge about tree building while forming a core structure that can be adjusted to meet specific data needs and goals. The default model stands as the basic representation of decision trees because it includes the most elementary tree structure and avoids advanced methods like pruning or ensemble techniques.
+
+*Hypothesis 1: Basic decision trees using default parameters achieve acceptable performance levels*
+
+I expect that a basic decision tree model using standard parameters will deliver satisfactory results. The default decision tree model forecasts the results of a marketing campaign based on two key variables: The model uses two main variables which include the month when the final contact happened and the length of that final contact measured in seconds. Data division at the root node is based on the 'poutcome' variable reflecting prior marketing campaign results. The model takes one branch when 'poutcome' equals 'failure' or 'other' and follows another branch for all other cases.
+
+The model performs additional splits by examining both 'month' and 'duration' variables. A leaf node displays the model's estimated probability of achieving a positive result through the displayed number. When the 'month' is part of {apr, dec, feb, jan, may, nov} and the 'duration' measures fewer than 166 seconds the model forecasts a 54% chance for a positive outcome. The displayed percentages in each leaf node represent the share of positive training data outcomes that matched the specific leaf node.
+
+The predictive model uses only two input variables and binary splits to operate. The values found in the leaf nodes function as indicators for how confident the model is about each prediction.
+
+Overall, the default decision tree model's initial results show moderate effectiveness. The model achieves high accuracy despite its poor sensitivity rate of 56.26% which points to difficulties in detecting positive cases. The model's predictions demonstrate only moderate alignment with actual outcomes as shown by the Kappa statistic of 0.511.
+
+**Experiment 2: Decision Tree with Hyperparameter Tuning**
+
+I decided to test a *Decision Tree Model with Hyperparameter Tuning* since the default model only showed moderate performance.
+
+The default model achieves high accuracy but its low sensitivity suggests challenges in detecting positive cases correctly. The Kappa statistic showcases only a moderate level of agreement between predicted and actual results. Hyperparameter tuning is crucial for improving model performance because it helps the model better recognize positive cases. The tuning process aims to achieve the best tree complexity by minimizing variance alongside maintaining low bias to produce more accurate and dependable predictions.
+
+*Hypothesis 2: Optimizing complexity parameters will improve model performance*
+
+The second model's hypothesis suggested that better performance results from increased complexity parameters. Through my experiment I deployed Grid Search together with cross-validation to determine the best model configuration. According to cross-validation results, about 0.002 represents the best parameter value. The ROC score declined when complexity was increased beyond this specific threshold. The experiment results demonstrate that decision tree models achieve the best performance at a specific optimal complexity level. A model that fails to capture underlying patterns may underfit while one that captures noise instead of patterns may overfit the data both resulting in degraded performance as indicated by the ROC score. The point of maximum ROC score indicates the optimal complexity parameter which represents the best compromise between model complexity and predictive performance.
+
+The second model showed outstanding overall accuracy reaching 84.18% which represented substantial improvement compared to the baseline model. The model's sensitivity requires further improvement as it lingers at 56.82%. The model demonstrates high proficiency in identifying negative cases through its 92.24% specificity rate.
+
+
+**Experiment 3: Decision Tree with Feature Selection**
+
+*Hypothesis 3: The selection of essential features leads to better model performance*.
+
+
+Hyperparameter tuning serves to optimize model performance by adjusting its parameters. The model undergoes feature selection as a method for improvement which involves eliminating unnecessary features that might reduce its performance. The strategic combination produces enhanced accuracy along with improved predictive capabilities. I am convinced that choosing this particular feature model will enhance the performance of the existing model.
+
+The third model failed to deliver better results compared to the tuned model. The model reached an accuracy level of 83.79% and displayed a 95% confidence interval from 0.8224 to 0.8526. The Kappa statistic demonstrates a moderate agreement value of 0.511 with sensitivity and specificity measured at 56.26% and 91.91% respectively.
+
+
+
+The focus of my experiments was to elevate the performance of a simple decision tree model by employing feature selection techniques along with hyperparameter tuning strategies. Hyperparameter tuning produced superior results which slightly outperformed both the baseline model and the feature selection approach. The model optimized through hyperparameter tuning reached the superior AUC score of 0.8554757. This model demonstrates superior performance through higher true positive rates at different false positive rates when compared to alternative models as shown by the ROC curve.
+
+
+
+**Random forest**
+
+**Random forest**
+
+Machine learning practitioners must include the Random Forest algorithm in their essential toolset. Random Forest combines high accuracy and interpretability with versatile capabilities making it a powerful asset for both research and practical use cases. The increasing complexity and data volume will magnify the importance of algorithms such as Random Forests which will be instrumental in generating insights and guiding decisions across various fields.
+
+**Experiment 1: Default Random Forest**
+
+The default random forest model was my choice for the initial experiment. The default hyperparameter settings provide accurate predictions alongside easy interpretability of their functionality. The risk of overfitting for a classifier declines as the forest includes enough trees.
+
+*Hypothesis 1: A Random Forest classifier operating with default settings is expected to achieve reliable performance levels.*
+
+As the number of trees grows the out-of-bag (OOB) error rate declines until it stabilizes at approximately 0.1 according to the graph's results. The trend shows that performance improves with the addition of trees but experiences diminishing returns after a specific threshold. On the test dataset the model achieves an accuracy rate of approximately 85.45%.
+
+The results affirm the hypothesis that the default configuration of a baseline Random Forest model produces satisfactory outcomes because of its relatively high accuracy.
+
+The test data evaluation shows that Random Forest model achieves an accuracy rate of 85.45%. According to the OOB error graph more trees improve model performance but the enhancement diminishes past a certain limit.
+
+**Experiment 2: Random Forest with increased number of trees**
+
+The baseline Random Forest model typically uses 100 decision trees. The number of trees in the Random Forest model can be modified to match available computational resources and the complexity of the problem. The accuracy of results improves when more trees are used but this approach demands higher computational power.
+
+*Hypothesis: The model performance improves with an increased number of trees.*
+
+The model uses a Random Forest algorithm with 200 trees for evaluation. The out-of-bag error record starts high but shows rapid decline with added trees showing enhanced model performance. The error rate levels off after adding about 20 trees which indicates that further increasing the number of trees produces minimal improvements. The final OOB error of about 0.1 indicates both a low rate of error and strong predictive accuracy. The model demonstrates strong performance by achieving an accuracy score of 0.8507018 which means it correctly predicts outcomes in about 85% of cases.
+
+After training with 200 trees the model achieved good performance with an accuracy close to 85% and maintained a low OOB error rate of about 0.1. After reaching 20 trees the error rate stops decreasing which indicates further tree additions offer limited advantages. The variable importance plot identifies the main features that influence the model's predictive outcomes.
+
+
+Unfortunaltely, the model performance did not show improvement with the addition of more trees. 
+
+
+**Adaptive boosting**
+
+AdaBoost functions as a machine learning algorithm which combines multiple weak learners through ensemble learning to build a strong predictive model that yields high accuracy.
+
+**Experiment 1: Default AdaBoost using the adabag package**
+
+*Hypothesis 1: Using default AdaBoost will provide acceptable performance. *
+
+The experiment uses AdaBoost in its default configuration with 50 iterations (mfinal set to 50). The accuracy achieved is 0.8464483. The error evolution graph displays a consistent error rate of approximately 0.15 during all 50 iterations.
+
+**Experiment 2: AdaBoost with increased number of iterations**
+
+The predictive accuracy of AdaBoost models improves when the number of iterations increases because the algorithm prevents overfitting. By adding more iterations AdaBoost can correct errors made by weak classifiers thereby converting them into effective strong classifiers.
+
+*Hypothesis 2: Model accuracy improves when the number of iterations increases.*
+
+For the second experiment I decided to increase the boosting iteration count to 100 by setting mfinal to 100. The modification led to a small accuracy improvement that reached a score of 0.8468737.
+
+The model demonstrated a slight improvement in accuracy and error rate when the boosting iterations were raised from 50 to 100. The reduction in error remains small since the performance improvement is not significant. The model's effectiveness appears to reach a maximum after a specific number of iterations and additional increases beyond this point likely produce minimal improvements. The ideal iteration count for this dataset and model should be determined through further analysis.
+
+
+**Summary**
+
+```{r}
+#Create summary table
+results_comprehensive <- data.frame(
+  Model= c("Decision Tree (Default)", "Decision Tree with tuning", "Decision Tree with feature selection",
+            "Random_Forest (Default)", "Random_Forest (ntree = 200)",
+            "Adaptive_Boosting (mfinal = 50)", "Adaptive_Boosting (mfinal = 100)"),
+  Accuracy = c(baseline_conf_matrix$overall["Accuracy"], 
+               tuned_conf_matrix$overall["Accuracy"],
+               feature_conf_matrix$overall["Accuracy"],
+               cm_rf1$overall["Accuracy"], 
+               cm_rf2$overall["Accuracy"],
+               cm_ada1$overall["Accuracy"], 
+               cm_ada2$overall["Accuracy"]),
+  Sensitivity = c(baseline_conf_matrix$byClass["Sensitivity"], 
+                  tuned_conf_matrix$byClass["Sensitivity"],
+                  feature_conf_matrix$byClass["Sensitivity"],
+                  cm_rf1$byClass["Sensitivity"], 
+                  cm_rf2$byClass["Sensitivity"],
+                  cm_ada1$byClass["Sensitivity"], 
+                  cm_ada2$byClass["Sensitivity"]),
+  Specificity = c(baseline_conf_matrix$byClass["Specificity"], 
+                  tuned_conf_matrix$byClass["Specificity"],
+                  feature_conf_matrix$byClass["Specificity"],
+                  cm_rf1$byClass["Specificity"], 
+                  cm_rf2$byClass["Specificity"],
+                  cm_ada1$byClass["Specificity"], 
+                  cm_ada2$byClass["Specificity"])
+)
+
+kable(results_comprehensive, "html", caption = "Comprehensive Model Performance Comparison") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(2:4, color = "white", background = "SteelBlue")
+```
+
+The default Random Forest model demonstrates optimal accuracy (0.8545) and sensitivity (0.9207) yet shows a relatively low specificity (0.6299).
+While Decision Trees and their tuned variants exhibit better specificity they demonstrate significantly lower sensitivity compared to other models. AdaBoost models achieve high sensitivity but exhibit the lowest specificity among all evaluated models.
+
+Data scientists should examine Random Forest models to enhance specificity while maintaining their high sensitivity levels. Researchers can enhance specificity through additional hyperparameter optimization and by modifying class weights to emphasize false negatives. Business scenarios with expensive false positives may benefit more from decision trees' higher specificity compared to random forests' higher sensitivity. 
+
+The selection of the best model for solving the business problem depends primarily on the comparative costs associated with false positive and false negative outcomes. I think, the Random Forest model should be chosen when the goal is to maximize positive case detection even at the expense of increasing false positives. When minimizing false positives becomes a priority the optimal choice could be either a tuned decision tree or modifying the Random Forest classification threshold. 
+
+
+## Appendix: All code for this report
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
+
+
+
+

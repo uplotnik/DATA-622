@@ -1,0 +1,453 @@
+---
+title: "Data 622 Assignment 1"
+author: "Uliana Plotnikova"
+date: "2025-02-16"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(rpart)
+library(rpart.plot)
+library(lubridate)
+library(skimr)
+library(stringr)
+library(corrplot)
+library(ggplot2)
+library(fpp3)
+library(caret)
+library(highcharter)
+```
+
+```{r setup, include=FALSE}
+data <- read.csv("https://raw.githubusercontent.com/uplotnik/DATA-622/refs/heads/main/bank-full.csv",sep=";")
+data
+```
+
+
+```{r}
+data <- read.csv("https://raw.githubusercontent.com/uplotnik/DATA-622/refs/heads/main/bank-full.csv",sep=";")
+data
+```
+
+
+
+
+
+
+
+Read the data into R and review its structure.This step will reveal data types, overall central tendency, spread, and potential issues like missing values
+
+```{r}
+skim(data)
+```
+
+
+```{r}
+head(data)
+```
+
+
+
+
+
+```{r}
+str(data)
+summary(data)
+dim(data)
+```
+
+
+```{r}
+missing_values <- colSums(is.na(data))
+
+print(missing_values)
+```
+Step 3: Correlational analysis for numeric variables
+
+```{r}
+numeric_vars <- sapply(data, is.numeric)
+
+data_numeric <- data[, numeric_vars]
+
+cor_matrix <- cor(data_numeric, use="complete.obs")
+
+```
+
+```{r}
+hchart(cor_matrix, type = "heatmap", color = "RdYlGn") %>%
+
+  hc_title(text = "Correlation Matrix") %>%
+
+  hc_xAxis(title = list(text = "Variables")) %>%
+
+  hc_yAxis(title = list(text = "Variables"))
+```
+
+
+
+Step 4: Distribution and outliers for numeric variables
+
+
+Histograms for numeric variables
+
+```{r}
+par(mfrow=c(2,2))
+
+for(col in names(data_numeric)){
+
+  hist(data_numeric[[col]], main=paste("Histogram of", col), xlab=col, col="skyblue")
+
+}
+
+par(mfrow=c(1,1))
+```
+
+
+
+
+Check for outliers
+
+```{r}
+par(mfrow=c(2,2))
+
+for(col in names(data_numeric)){
+
+  boxplot(data_numeric[[col]], main=paste("Boxplot of", col), col="lightgreen")
+
+}
+
+par(mfrow=c(1,1))
+```
+
+Step 5: Relationships between variables
+Scatterplot matrix for numeric variables
+
+
+```{r}
+pairs(data_numeric, main="Scatterplot Matrix for Numeric Variables")
+```
+
+
+Step 6: Distribution of categorical variables
+
+
+
+```{r}
+par(mfrow=c(2,2))
+categorical_vars <- names(data)[!numeric_vars]
+
+for(col in categorical_vars){
+
+  print(table(data[[col]]))
+
+  ggplot(data, aes_string(x=col)) +
+
+    geom_bar(fill="coral") +
+
+    ggtitle(paste("Bar Plot of", col)) +
+
+    theme_minimal() -> p
+
+  print(p)
+
+}
+```
+
+
+
+
+
+
+Data Cleaning
+
+
+
+Dimensionality Reduction
+
+Dimensionality reduction removes correlated or redundant data that can slow down training</searchRefSen
+
+    .
+
+1.  **Identify Highly Correlated Features**: Use a correlation matrix to find highly correlated numerical variables
+
+```{r}
+    cor_matrix <- cor(data[, sapply(data, is.numeric)], use = "pairwise.complete.obs")
+    print(cor_matrix)
+```
+2. Remove Correlated Features: Remove one of the highly correlated features
+
+```{r}
+library(caret)
+high_corr <- findCorrelation(cor_matrix, cutoff = 0.75) # Adjust cutoff as needed
+data <- data[, -high_corr]
+```
+
+
+
+Feature Engineering
+
+Feature engineering uses business knowledge to create new, more informative features from existing ones</searchRefSen
+
+    .
+
+1.  **Create New Features**: Based on domain knowledge, create new features that might improve model performance</searchRefSen
+
+    .  For example, create a new column combining different columns.</p>
+
+```{r}
+data
+```
+    
+    
+```{r}
+    # Example: Create an age group variable
+data$age_group <- ifelse(data$age < 30, "Young", ifelse(data$age < 50, "Middle_Aged", "Senior"))
+
+```
+    
+Data Transformation
+
+Data transformation involves scaling numerical features and handling categorical variables</searchRefSen
+
+    .
+
+1.  **Normalize Numerical Features**: Use techniques like Min-Max scaling or Z-score standardization to normalize numerical features</searchRefSen
+
+
+```{r}
+    # Min-Max scaling
+    normalize <- function(x) {
+      return ((x - min(x)) / (max(x) - min(x)))
+    }
+    data$numerical_column <- normalize(data$numerical_column)
+
+    # Z-score standardization
+    data$numerical_column <- scale(data$numerical_column)
+```
+
+ 
+ 
+ 
+ 
+
+
+
+
+
+```{r setup, include=FALSE}
+bank_marketing <- read.csv("https://raw.githubusercontent.com/uplotnik/DATA-622/refs/heads/main/bank-full.csv",sep=";")
+```
+   
+```{r}
+str(bank_marketing)
+
+summary(bank_marketing)
+
+head(bank_marketing)
+```
+ 
+ 
+```{r}
+# View the first few rows of the dataset
+head(bank_marketing)
+
+# Check for missing values
+sapply(bank_marketing, function(x) sum(is.na(x)))
+
+# Check the structure of the dataset
+str(bank_marketing)
+
+# Check the summary statistics of the dataset
+summary(bank_marketing)
+
+# Check for correlation between features
+correlation_matrix <- cor(bank_marketing[, sapply(bank_marketing, is.numeric)])
+corrplot(correlation_matrix, method = "color")
+
+# Check the distribution of each variable
+for (i in names(bank_marketing)) {
+  if (is.numeric(bank_marketing[, i])) {
+    hist(bank_marketing[, i], main = i, xlab = i, col = "lightblue", border = "black")
+  }
+}
+
+# Check for outliers
+for (i in names(bank_marketing)) {
+  if (is.numeric(bank_marketing[, i])) {
+    boxplot(bank_marketing[, i], main = i, xlab = i, col = "lightblue", border = "black")
+  }
+}
+
+# Check the relationships between different variables
+for (i in names(bank_marketing)) {
+  for (j in names(bank_marketing)) {
+    if (i != j && is.numeric(bank_marketing[, i]) && is.numeric(bank_marketing[, j])) {
+      plot(bank_marketing[, i], bank_marketing[, j], main = paste(i, "vs", j), xlab = i, ylab = j)
+    }
+  }
+}
+
+# Check the distribution of categorical variables
+for (i in names(bank_marketing)) {
+  if (is.factor(bank_marketing[, i])) {
+    barplot(table(bank_marketing[, i]), main = i, xlab = i, col = "lightblue", border = "black")
+  }
+}
+
+# Check the central tendency and spread of each variable
+for (i in names(bank_marketing)) {
+  if (is.numeric(bank_marketing[, i])) {
+    print(paste("Mean of", i, "is", mean(bank_marketing[, i])))
+    print(paste("Median of", i, "is", median(bank_marketing[, i])))
+    print(paste("Standard Deviation of", i, "is", sd(bank_marketing[, i])))
+    print(paste("Variance of", i, "is", var(bank_marketing[, i])))
+    print(paste("Skewness of", i, "is", skewness(bank_marketing[, i])))
+    print(paste("Kurtosis of", i, "is", kurtosis(bank_marketing[, i])))
+  }
+}
+```
+ 
+ 
+ 
+ 
+ Based on the exploratory data analysis (EDA) performed earlier, I recommend the following machine learning algorithms for the Bank Marketing Dataset:
+
+    Logistic Regression: This algorithm is suitable for binary classification problems, which is the case for the Bank Marketing Dataset where the target variable is "y" (whether the client subscribed to a term deposit or not). Logistic regression is a simple and interpretable model that can handle categorical and numerical features.
+    Decision Trees: Decision trees are a popular choice for classification problems and can handle both categorical and numerical features. They are easy to interpret and can be used to identify the most important features contributing to the prediction.
+    Random Forest: Random forest is an ensemble learning method that combines multiple decision trees to improve the accuracy and robustness of the model. It can handle high-dimensional data and is less prone to overfitting.
+    Support Vector Machines (SVM): SVM is a powerful algorithm that can handle high-dimensional data and non-linear relationships between features. It is suitable for binary classification problems and can be used with different kernels to improve the model's performance.
+
+Pros and Cons of each algorithm:
+
+    Logistic Regression:
+        Pros: simple, interpretable, fast training time
+        Cons: assumes linear relationship between features and target variable, may not perform well with non-linear relationships
+    Decision Trees:
+        Pros: easy to interpret, can handle categorical and numerical features, fast training time
+        Cons: may overfit the data, sensitive to hyperparameters
+    Random Forest:
+        Pros: robust, handles high-dimensional data, less prone to overfitting
+        Cons: computationally expensive, may be difficult to interpret
+    Support Vector Machines (SVM):
+        Pros: powerful, can handle high-dimensional data, non-linear relationships
+        Cons: computationally expensive, sensitive to hyperparameters, may not perform well with noisy data
+
+Recommended Algorithm:
+Based on the characteristics of the Bank Marketing Dataset, I recommend using Random Forest as the primary algorithm. Random forest is a robust and accurate algorithm that can handle high-dimensional data and non-linear relationships between features. It is also less prone to overfitting, which is a common issue in machine learning models.
+
+Labels in the Data:
+Yes, there are labels in the data, which is the target variable "y" (whether the client subscribed to a term deposit or not). The presence of labels impacts the choice of algorithm, as we need to select algorithms that are suitable for binary classification problems.
+
+Relationship to the Dataset:
+The choice of algorithm relates to the dataset in the following ways:
+
+    The dataset has a mix of categorical and numerical features, which makes logistic regression, decision trees, and random forest suitable choices.
+    The dataset has a relatively large number of features (20), which makes random forest a good choice due to its ability to handle high-dimensional data.
+    The dataset has a binary target variable, which makes logistic regression, decision trees, and SVM suitable choices.
+
+Impact of Fewer Data Records:
+If there were fewer than 1,000 data records, I would recommend using Logistic Regression or Decision Trees instead of Random Forest. These algorithms are simpler and require less data to train, making them more suitable for smaller datasets. Random Forest, on the other hand, requires a larger dataset to achieve good performance, as it relies on the combination of multiple decision trees to improve accuracy.
+
+
+
+
+Based on the exploratory data analysis (EDA) and algorithm selection, I recommend the following pre-processing steps for the Bank Marketing Dataset:
+
+Data Cleaning:
+
+    Handling Missing Values: The dataset has some missing values, which need to be addressed. I would use the mean or median imputation method for numerical features and the mode imputation method for categorical features.
+    Removing Duplicates: Check for duplicate rows in the dataset and remove them if necessary.
+    Data Type Conversion: Ensure that the data types of the features are correct (e.g., numerical, categorical, etc.).
+
+Dimensionality Reduction:
+
+    Correlation Analysis: Perform a correlation analysis to identify highly correlated features. Remove one of the highly correlated features to reduce dimensionality.
+    Principal Component Analysis (PCA): Apply PCA to reduce the dimensionality of the dataset while retaining most of the information.
+
+Feature Engineering:
+
+    Creating New Features: Use business knowledge to create new features that can help improve the model's performance. For example:
+        Create a new feature "age_group" based on the "age" feature (e.g., 18-24, 25-34, etc.).
+        Create a new feature "income_group" based on the "income" feature (e.g., low, medium, high).
+    Transforming Existing Features: Transform existing features to improve their distribution or to make them more suitable for the algorithm. For example:
+        Log-transform the "income" feature to reduce skewness.
+
+Sampling Data:
+
+    Stratified Sampling: Use stratified sampling to ensure that the sample is representative of the population. This is particularly important for imbalanced datasets.
+
+Data Transformation:
+
+    Normalization: Normalize the numerical features to have a similar scale. This can help improve the model's performance and prevent features with large ranges from dominating the model.
+    Categorical Variable Encoding: Use one-hot encoding or label encoding to transform categorical variables into numerical variables.
+    Regularization: Apply regularization techniques (e.g., L1, L2) to prevent overfitting.
+
+Imbalanced Data:
+
+    Oversampling the Minority Class: Oversample the minority class (i.e., the class with fewer instances) to balance the dataset.
+    Undersampling the Majority Class: Undersample the majority class to balance the dataset.
+    SMOTE (Synthetic Minority Over-sampling Technique): Use SMOTE to generate synthetic samples of the minority class.
+    
+    
+    
+    
+```{r}
+# Handle missing values
+bank_marketing$age[is.na(bank_marketing$age)] <- mean(bank_marketing$age, na.rm = TRUE)
+bank_marketing$balance[is.na(bank_marketing$balance)] <- median(bank_marketing$balance, na.rm = TRUE)
+
+# Remove duplicates
+bank_marketing <- bank_marketing[!duplicated(bank_marketing), ]
+
+# Convert data types
+bank_marketing$job <- as.factor(bank_marketing$job)
+bank_marketing$marital <- as.factor(bank_marketing$marital)
+
+# Perform correlation analysis
+cor_matrix <- cor(bank_marketing[, sapply(bank_marketing, is.numeric)])
+corrplot(cor_matrix, method = "color")
+
+# Remove highly correlated features
+bank_marketing <- bank_marketing[, -which(cor_matrix > 0.7)]
+
+# Apply PCA
+pca <- prcomp(bank_marketing[, sapply(bank_marketing, is.numeric)], scale. = TRUE)
+bank_marketing_pca <- data.frame(pca$x[, 1:5])
+```
+
+
+```{r}
+class(bank_marketing$age)
+```
+
+```{r}
+bank_marketing$age <- as.numeric(as.character(bank_marketing$age))
+bank_marketing$income_group <- as.numeric(as.character(bank_marketing$income))
+```
+
+```{r}
+# Create new features
+bank_marketing$age_group <- cut(bank_marketing$age, breaks = c(18, 24, 34, 44, 54, 64), labels = c("18-24", "25-34", "35-44", "45-54", "55-64"))
+
+
+# Transform existing features
+bank_marketing$income <- log(bank_marketing$income)
+
+# Normalize numerical features
+bank_marketing[, sapply(bank_marketing, is.numeric)] <- scale(bank_marketing[, sapply(bank_marketing, is.numeric)])
+
+# Encode categorical variables
+bank_marketing$job <- as.numeric(factor(bank_marketing$job))
+bank_marketing$marital <- as.numeric(factor(bank_marketing$marital))
+
+# Oversample the minority class
+set.seed(123)
+minority_class <- bank_marketing[bank_marketing$y == 1, ]
+majority_class <- bank_marketing[bank_marketing$y == 0, ]
+minority_class_oversampled <- minority_class[sample(nrow(minority_class), size = nrow(majority_class), replace = TRUE), ]
+bank_marketing_oversampled <- rbind(minority_class_oversampled, majority_class)
+```
+    
